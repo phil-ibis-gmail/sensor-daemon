@@ -4,31 +4,33 @@ import time
 import json
 import lsm303 as LSM303
 import bmp085 as BMP085
+import gpsreader as gps
 
-#lsm303 = LSM303.LSM_Reader()
-#lsm303.daemon=True
-#lsm303.start()
+
+
+lsm303 = LSM303.LSM_Reader()
+lsm303.daemon=True
+lsm303.start()
 
 bmp085= BMP085.BMP085_Reader()
 bmp085.daemon=True
 bmp085.start()
+
+gpsReader = gps.GPSReader()
+gpsReader.daemon=True
+gpsReader.start()
 
 class TCPHandler(SocketServer.StreamRequestHandler):
 	
 	def get_lsm_303(self,request):
 		params = dict(
 			type='lsm-303',
-			xa=lsm303.xa,
-			ya=lsm303.ya,
-			za=lsm303.za,
-
-			xg=lsm303.xg,
-			yg=lsm303.yg,
-			zg=lsm303.zg,
-
-			angle_x = lsm303.angle_x,
-			angle_y = lsm303.angle_y,
-			angle_z = lsm303.angle_z
+			accel = [lsm303.xag,lsm303.yag,lsm303.zag],
+			gyro = [lsm303.gyro_x,lsm303.gyro_y,lsm303.gyro_z],
+			mag = lsm303.vmag,
+			I = lsm303.I1B,
+			J = lsm303.J1B,
+			K = lsm303.K1B,
 			)
 		return params;
 
@@ -53,7 +55,10 @@ class TCPHandler(SocketServer.StreamRequestHandler):
 		
 
 	def get_data(self,request):
-		params = dict(bmp_085=self.get_bmp_085(request)); #,lsm_303=self.get_lsm_303(request));
+		params = dict(bmp_085=self.get_bmp_085(request),lsm_303=self.get_lsm_303(request));
+		if(gpsReader.hasData()):
+			gps_data = gpsReader.consumeData()
+			params['gps'] = gps_data;
 		return params;
 
 	def set_sea_level_pressure(self,arguments):
@@ -79,7 +84,7 @@ class ThreadedTCPServer(SocketServer.ThreadingMixIn,SocketServer.TCPServer):
 	pass
 
 if __name__ == '__main__':
-	HOST,PORT='192.168.8.101',9999;
+	HOST,PORT='localhost',9999;
 	server = ThreadedTCPServer((HOST,PORT),TCPHandler);
 	server.serve_forever();
 

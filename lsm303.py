@@ -11,6 +11,8 @@ def v3_scale(f, v):
 	return [v[0]*f,v[1]*f,v[2]*f]
 def v3_dot(a,b):
 	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+def v3_length(a):
+	return math.sqrt(v3_dot(a,a))
 def v3_normalize(v):
 	mag = math.sqrt(v3_dot(v,v))
 	return v3_scale(1.0/mag,v); 
@@ -52,7 +54,7 @@ class Phil_LSM303:
 		self.compass = I2C.Device(self.LSM303_ADDRESS_MAG,1)
 		self.compass.write8(self.LSM303_REGISTER_MAG_CRA_REG_M,0x14) # disable temperature, 30Hz output rate
 		self.compass.write8(self.LSM303_REGISTER_MAG_MR_REG_M,0x00)  # put sensor into continuous mode from sleep mode.
-		self.compass.write8(self.LSM303_REGISTER_MAG_CRB_REG_M,0x20) # set range +- 1.3 gauss, good enough for earth's mag field.
+		self.compass.write8(self.LSM303_REGISTER_MAG_CRB_REG_M,0x20) # set range +- 1.3 gauss, good enough for earth's mag field.(x,y=1100LSB/gauss,z=980LSB/gauss)
 
 
 		self.accel = I2C.Device(self.LSM303_ADDRESS_ACCEL,1)
@@ -82,8 +84,13 @@ class Phil_LSM303:
 		
 	def mag(self,a,b):
 		n = (a<<8)|b;
-		return float(numpy.int16(n));# if n < 32768 else n-65536 # 2's complement signed.
+		return float(numpy.int16(n));# 2's complement signed.
 
+	def make_mag(self):
+		x = self.xm/1100
+		y = self.ym/1100
+		z = self.zm/980
+		return [x,y,z] 
 	def make_a(self,v):
 		range=4.0*9.81
 		max=32768
@@ -107,7 +114,9 @@ class Phil_LSM303:
 		self.ym = self.mag(list[4],list[5])
 		heading = math.atan2(self.ym,self.xm)
 
-		#print x_h_m,y_h_m,z_h_m,heading*180.0/3.1415;
+		self.vmag = self.make_mag()
+
+		#print self.xm,self.ym,self.zm,math.degrees(heading),str(vmag);
 		
 		accel_list = []
 		for x in range(0,6):
@@ -140,13 +149,19 @@ class Phil_LSM303:
 		self.gyro_z = self.make_gyro(self.gyro_z_raw)
 		
 		K1 = [-self.xag,-self.yag,-self.zag]
-		I1 = [self.xm,self.ym,self.zm]
+		
+		M = self.vmag; #[self.xm,self.ym,self.zm]
+		m_length = v3_length(M)	
+		M = v3_normalize(M)
+		W = v3_cross(K1,M)
+		I1 = v3_normalize(v3_cross(W,K1))
+
 		J1 = v3_cross(K1,I1)
 
 		K1 = v3_normalize(K1)		
 		I1 = v3_normalize(I1)
 		J1 = v3_normalize(J1)
-	
+
 		if not self.hasData:
 			self.K1B = K1; self.J1B = J1; self.I1B = I1;
 			self.hasData=True
@@ -155,10 +170,14 @@ class Phil_LSM303:
 		K0 = self.K1B; I0 = self.I1B; J0 = self.J1B
 
 		dThetaA = v3_cross(K0,v3_sub(K1,K0))
+		#dThetaA = [0.0,0.0,0.1]
 		dThetaW = [-math.radians(self.gyro_x)*dt,-math.radians(self.gyro_y)*dt,-math.radians(self.gyro_z)*dt]
 		dThetaM = v3_cross(I0,v3_sub(I1,I0))		
+		#dThetaM = [0.5,0.5,0.5]
 
-		dThetaAvg = v3_average(dThetaA,dThetaW,dThetaM,[0.1,0.9,0.0])
+		dThetaAvg = v3_average(dThetaA,dThetaW,dThetaM,[0.1,0.8,0.1])
+
+		#print 'dThetaM: {0} {1}'.format(dThetaAvg,m_length);
 		
 		I1Bt = v3_add(I0 , v3_cross(dThetaAvg,I0))
 		J1Bt = v3_add(J0 , v3_cross(dThetaAvg,J0))
@@ -187,6 +206,7 @@ class Phil_LSM303:
 		self.gyro_y = self.make_gyro(self.gyro_y_raw)
 		self.gyro_z = self.make_gyro(self.gyro_z_raw)
 		
+
 		#print '{0:10.4} {1:10.4} {2:10.4}'.format(self.gyro_x,self.gyro_y,self.gyro_z);
 		
 		if not self.hasData:
@@ -240,7 +260,7 @@ class LSM_Reader(threading.Thread,Phil_LSM303) :
 			while not self.stopRequested:
 				start = datetime.datetime.now()
 				self.read_data(dt)
-				time.sleep(0.001);
+				time.sleep(0.05);
 				end = datetime.datetime.now();			
 				delta = end-start;
 				dt=delta.microseconds/1.0E6
@@ -262,7 +282,7 @@ if __name__ == '__main__':
 				reply += '{0:0.2} {1:0.2} {2:0.2} '.format(lsm303.J1B[0],lsm303.J1B[1],lsm303.J1B[2]);
 				reply += '{0:0.2} {1:0.2} {2:0.2}  '.format(lsm303.K1B[0],lsm303.K1B[1],lsm303.K1B[2]);
 				
-				print message,reply
+				#print message,reply
 				self.request.sendall(reply)
 
 	lsm303.daemon=True
